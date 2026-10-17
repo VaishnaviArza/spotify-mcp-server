@@ -8,6 +8,10 @@ dotenv.load_dotenv()
 scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing " \
 "user-read-recently-played playlist-read-private playlist-modify-public playlist-modify-private"
 
+def _check_limit(limit, max_limit):
+    if not 1 <= limit <= max_limit:
+        raise ValueError(f"limit must be between 1 and {max_limit}, got {limit}")
+
 def get_spotify_client():
     client_id = os.getenv("SPOTIFY_CLIENT_ID", "")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
@@ -27,7 +31,8 @@ def get_current_playback(sp):
 
     return {'is_playing': result['is_playing'], 'track': track_name, 'artist': artist_name}
 
-def get_recently_played(sp, limit):
+def get_recently_played(sp, limit=10):
+    _check_limit(limit, 50)
     result = sp.current_user_recently_played(limit=limit)
     items = result['items']
     recently_played = []
@@ -49,7 +54,8 @@ def get_active_device_id(sp):
             return device['id']
     return None
 
-def search_track(sp, query, limit):
+def search_track(sp, query, limit=10):
+    _check_limit(limit, 10)
     result = sp.search(q=query, type='track', limit=limit)
     items = result['tracks']['items']
     tracks = []
@@ -133,6 +139,9 @@ def add_to_queue(sp, track_uri, device_id=None):
 def get_user_playlists(sp):
     result = sp.current_user_playlists()
     items = result['items']
+    while result['next']:
+        result = sp.next(result)
+        items.extend(result['items'])
     playlists = []
     for item in items:
         playlists.append({"id": item['id'], "name": item['name'], 
@@ -142,9 +151,13 @@ def get_user_playlists(sp):
 def get_playlist_tracks(sp, playlist_id):
     result = sp.playlist_items(playlist_id=playlist_id)
     items = result['items']
+    while result['next']:
+        result = sp.next(result)
+        items.extend(result['items'])
     playlist_tracks = []
     for item in items:
-        playlist_tracks.append({"name": item['item']['name'],
+        if item['item'] is not None:
+            playlist_tracks.append({"name": item['item']['name'],
                                 "track_uri": item['item']['uri'],
                                 "artist_name": item['item']['artists'][0]['name']})
     return playlist_tracks
@@ -179,10 +192,9 @@ def remove_tracks_from_playlist(sp, playlist_id, track_uris):
 
 
 
-# if __name__ == "__main__":
-#     sp = get_spotify_client()
-#     import json
-#     result = sp.current_user_recently_played(limit=5)
-#     print(get_recently_played(sp))
+if __name__ == "__main__":
+    sp = get_spotify_client()
+    print(len(search_track(sp, "love", limit=11)))
+    print(len(get_recently_played(sp, limit=50)))
 
 
