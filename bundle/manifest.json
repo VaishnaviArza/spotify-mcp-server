@@ -1,0 +1,73 @@
+{
+  "manifest_version": "0.4",
+  "name": "spotify-mcp-server",
+  "display_name": "Spotify",
+  "version": "1.0.0",
+  "description": "Control your Spotify from Claude: play and pause, search, queue songs, and build or clean up playlists. Needs your own Spotify developer app credentials.",
+  "author": {
+    "name": "Sri Vaishnavi Arza",
+    "url": "https://github.com/VaishnaviArza"
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "server.py"],
+      "env": {
+        "SPOTIFY_CLIENT_ID": "${user_config.client_id}",
+        "SPOTIFY_CLIENT_SECRET": "${user_config.client_secret}",
+        "SPOTIFY_REDIRECT_URI": "${user_config.redirect_uri}"
+      }
+    }
+  },
+  "user_config": {
+    "client_id": {
+      "type": "string",
+      "title": "Spotify Client ID",
+      "description": "From your app in the Spotify developer dashboard.",
+      "required": true
+    },
+    "client_secret": {
+      "type": "string",
+      "title": "Spotify Client Secret",
+      "description": "From the same app's Settings page. Keep it private.",
+      "sensitive": true,
+      "required": true
+    },
+    "redirect_uri": {
+      "type": "string",
+      "title": "Redirect URI",
+      "description": "Must match the Redirect URI in your Spotify app exactly. Use 127.0.0.1, not localhost.",
+      "default": "http://127.0.0.1:8765/callback",
+      "required": true
+    }
+  },
+  "tools": [
+    { "name": "spotify_login", "description": "Log in to Spotify through the browser." },
+    { "name": "spotify_get_current_playback", "description": "Get the currently playing track and whether playback is active." },
+    { "name": "spotify_get_recently_played", "description": "Get recently played tracks (1 to 50)." },
+    { "name": "spotify_get_available_devices", "description": "List Spotify devices visible to the account." },
+    { "name": "spotify_search_track", "description": "Search for tracks and get their URIs (1 to 10 results)." },
+    { "name": "spotify_play", "description": "Start or resume playback, optionally a specific track." },
+    { "name": "spotify_pause", "description": "Pause playback." },
+    { "name": "spotify_skip_next", "description": "Skip to the next track." },
+    { "name": "spotify_skip_previous", "description": "Skip to the previous track." },
+    { "name": "spotify_set_volume", "description": "Set playback volume from 0 to 100." },
+    { "name": "spotify_add_to_queue", "description": "Add a track to the end of the queue." },
+    { "name": "spotify_get_user_playlists", "description": "List the user's playlists with ids and track counts." },
+    { "name": "spotify_get_playlist_tracks", "description": "List all tracks in a playlist." },
+    { "name": "spotify_create_playlist", "description": "Create a new playlist." },
+    { "name": "spotify_add_tracks_to_playlist", "description": "Add tracks to a playlist." },
+    { "name": "spotify_remove_tracks_from_playlist", "description": "Remove tracks from a playlist, including every copy of each." }
+  ],
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": { "python": ">=3.10" }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VaishnaviArza/spotify-mcp-server"
+  }
+}

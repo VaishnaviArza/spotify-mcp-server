@@ -1,24 +1,81 @@
 import os
 import dotenv
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyOAuth, SpotifyOauthError
+import threading
+from pathlib import Path
 
 dotenv.load_dotenv()
 
 scopes = "user-read-playback-state user-modify-playback-state user-read-currently-playing " \
 "user-read-recently-played playlist-read-private playlist-modify-public playlist-modify-private"
 
+TOKEN_PATH = Path.home() / ".spotify_mcp_server" / "token.json"
+
+_login_lock = threading.Lock()
+_login_thread = None
+_login_error = None
+
+def missing_credentials():
+    names = ["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET", "SPOTIFY_REDIRECT_URI"]
+    return [n for n in names if not os.getenv(n)]
+
+def get_auth_manager():
+    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return SpotifyOAuth(
+        client_id=os.getenv("SPOTIFY_CLIENT_ID", ""),
+        client_secret=os.getenv("SPOTIFY_CLIENT_SECRET", ""),
+        redirect_uri=os.getenv("SPOTIFY_REDIRECT_URI", ""),
+        scope=scopes,
+        cache_path=str(TOKEN_PATH)
+    )
+
+def get_spotify_client(auth_manager=None):
+    return spotipy.Spotify(auth_manager=auth_manager or get_auth_manager())
+
+def is_logged_in(auth_manager):
+    try:
+        token = auth_manager.validate_token(auth_manager.cache_handler.get_cached_token())
+    except SpotifyOauthError:
+        return False
+    return token is not None
+
+def login_in_progress():
+    return _login_thread is not None and _login_thread.is_alive()
+
+def get_login_error():
+    return _login_error
+
+def _run_login(auth_manager):
+    global _login_error
+    try:
+        auth_manager.get_access_token(as_dict=False)
+    except Exception as e:
+        _login_error = str(e)
+
+def start_login(auth_manager):
+    global _login_thread, _login_error
+    with _login_lock:
+        if is_logged_in(auth_manager):
+            return "already_logged_in"
+        if login_in_progress():
+            return "in_progress"
+        _login_error = None
+        _login_thread = threading.Thread(target=_run_login, args=(auth_manager,), daemon=True)
+        _login_thread.start()
+        return "started"
+
 def _check_limit(limit, max_limit):
     if not 1 <= limit <= max_limit:
         raise ValueError(f"limit must be between 1 and {max_limit}, got {limit}")
 
-def get_spotify_client():
-    client_id = os.getenv("SPOTIFY_CLIENT_ID", "")
-    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
-    redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "")
-    auth_manager = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri,
-                 scope=scopes)
-    return spotipy.Spotify(auth_manager=auth_manager)
+# def get_spotify_client():
+#     client_id = os.getenv("SPOTIFY_CLIENT_ID", "")
+#     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
+#     redirect_uri = os.getenv("SPOTIFY_REDIRECT_URI", "")
+#     auth_manager = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri,
+#                  scope=scopes)
+#     return spotipy.Spotify(auth_manager=auth_manager)
 
 def get_current_playback(sp):
     result = sp.current_playback()
@@ -190,11 +247,7 @@ def remove_tracks_from_playlist(sp, playlist_id, track_uris):
     except spotipy.SpotifyException as e:
         return {"is_success": False, "message": str(e)}
 
-
-
 if __name__ == "__main__":
     sp = get_spotify_client()
-    print(len(search_track(sp, "love", limit=11)))
-    print(len(get_recently_played(sp, limit=50)))
-
+    print(f"Logged in as {sp.current_user()['display_name']}")
 

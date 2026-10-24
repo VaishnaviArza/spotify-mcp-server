@@ -2,6 +2,12 @@ from os import name
 
 from mcp.server.mcpserver import MCPServer
 from spotify_client import (
+    get_auth_manager,
+    is_logged_in,
+    start_login,
+    login_in_progress,
+    get_login_error,
+    missing_credentials,
     get_spotify_client,
     get_current_playback,
     get_recently_played,
@@ -20,10 +26,35 @@ from spotify_client import (
     remove_tracks_from_playlist
 )
 import spotipy
-from mcp.server.mcpserver.exceptions import ResourceNotFoundError, ToolError
+from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError, ToolError
 
-sp = get_spotify_client()
+# sp = get_spotify_client()
 mcp = MCPServer("spotify-mcp-server") #server's display name ""
+_auth_manager = None
+_sp = None
+
+def _manager(error=ToolError):
+    global _auth_manager
+    missing = missing_credentials()
+    if missing:
+        raise error("Spotify credentials are not configured. Missing: " + ", ".join(missing))
+    if _auth_manager is None:
+        _auth_manager = get_auth_manager()
+    return _auth_manager
+
+def get_sp(error=ToolError):
+    """Return a logged-in Spotify client, or raise a clear error. Never starts a login."""
+    global _sp
+    manager = _manager(error)
+    if not is_logged_in(manager):
+        if login_in_progress():
+            raise error("Spotify login is waiting for approval in the browser. "
+                        "Ask the user to finish it, then retry.")
+        detail = f" (last login error: {get_login_error()})" if get_login_error() else ""
+        raise error("Not logged in to Spotify. Call spotify_login, then retry." + detail)
+    if _sp is None:
+        _sp = get_spotify_client(manager)
+    return _sp
 
 def _unwrap(result):
     if isinstance(result, dict) and 'is_success' in result:
@@ -32,12 +63,28 @@ def _unwrap(result):
         return result
     return result
 
+@mcp.tool()
+def spotify_login() -> str:
+    """Log in to Spotify. Call this when another Spotify tool says the user is not
+    logged in. It opens a browser window where the user approves access. After
+    calling it, ask the user to approve in the browser, then retry their original request.
+    """
+    manager = _manager()
+    status = start_login(manager)
+    if status == "already_logged_in":
+        return "Already logged in to Spotify."
+    if status == "in_progress":
+        return ("A login is already waiting for approval. Ask the user to open this URL "
+                f"and approve access: {manager.get_authorize_url()}")
+    return ("A browser window should have opened for Spotify. Ask the user to approve "
+            "access there, then retry their original request. If no window opened, "
+            f"they can open this URL: {manager.get_authorize_url()}")
 
 @mcp.tool()
 def spotify_get_current_playback() -> dict:
     """Get the currently playing track on Spotify, including whether playback is active, 
     the track name and artist name."""
-    return get_current_playback(sp)
+    return get_current_playback(get_sp())
 
 @mcp.tool()
 def spotify_get_recently_played(limit: int = 10) -> list:
@@ -47,7 +94,7 @@ def spotify_get_recently_played(limit: int = 10) -> list:
     Returns the time played at, the track name, unique identifier of the track (track_uri) 
     and the artist name"""
     try:
-        return get_recently_played(sp, limit)
+        return get_recently_played(get_sp(), limit)
     except ValueError as e:
         raise ToolError(str(e)) from e
 
@@ -55,7 +102,7 @@ def spotify_get_recently_played(limit: int = 10) -> list:
 def spotify_get_available_devices() -> list:
     """Get all Spotify devices currently visible to this account. Returns a list of devices,
     each with id, name, type, is_active (bool), and volume_percent"""
-    return get_available_devices(sp)
+    return get_available_devices(get_sp())
 
 @mcp.tool()
 def spotify_search_track(query: str, limit: int = 10) -> list:
@@ -71,7 +118,7 @@ def spotify_search_track(query: str, limit: int = 10) -> list:
         required as input for playback and playlist tools.
     """
     try:
-        return search_track(sp, query, limit)
+        return search_track(get_sp(), query, limit)
     except ValueError as e:
         raise ToolError(str(e)) from e
 
@@ -91,18 +138,18 @@ def spotify_play(track_uri: str = None) -> dict:
         A dict with is_success (bool) and message (str). Check is_success to 
         confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(play(sp, track_uri=track_uri))
+    return _unwrap(play(get_sp(), track_uri=track_uri))
 
 
 @mcp.tool()
-def spotify_pause_track() -> dict:
+def spotify_pause() -> dict:
     """Pause Spotify playback.
     
     Returns:
         A dict with is_success (bool) and message (str). Check is_success to 
         confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(pause(sp))
+    return _unwrap(pause(get_sp()))
 
 
 @mcp.tool()
@@ -113,7 +160,7 @@ def spotify_skip_next() -> dict:
         A dict with is_success (bool) and message (str). Check is_success to 
         confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(skip_next(sp))
+    return _unwrap(skip_next(get_sp()))
 
 @mcp.tool()
 def spotify_skip_previous() -> dict:
@@ -123,7 +170,7 @@ def spotify_skip_previous() -> dict:
         A dict with is_success (bool) and message (str). Check is_success to 
         confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(skip_previous(sp))
+    return _unwrap(skip_previous(get_sp()))
 
 @mcp.tool()
 def spotify_set_volume(volume_percent: int) -> dict:
@@ -136,7 +183,7 @@ def spotify_set_volume(volume_percent: int) -> dict:
         A dict with is_success (bool) and message (str). If volume_percent is 
         outside 0-100, is_success is True and the message explains the valid range. Otherwise, check is_success to confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(set_volume(sp, volume_percent))
+    return _unwrap(set_volume(get_sp(), volume_percent))
 
 @mcp.tool()
 def spotify_add_to_queue(track_uri: str) -> dict:
@@ -148,7 +195,7 @@ def spotify_add_to_queue(track_uri: str) -> dict:
         A dict with is_success (bool) and message (str). Check is_success to 
         confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(add_to_queue(sp, track_uri))
+    return _unwrap(add_to_queue(get_sp(), track_uri))
 
 
 @mcp.tool()
@@ -160,7 +207,7 @@ def spotify_get_user_playlists() -> list:
         required as input for other playlist tools (getting tracks, adding 
         tracks, removing tracks).
     """
-    return get_user_playlists(sp)
+    return get_user_playlists(get_sp())
 
 @mcp.tool()
 def spotify_get_playlist_tracks(playlist_id: str) -> list:
@@ -172,7 +219,7 @@ def spotify_get_playlist_tracks(playlist_id: str) -> list:
         A list of tracks, each with name, uri, and artist.
     """
     try:
-        return get_playlist_tracks(sp, playlist_id)
+        return get_playlist_tracks(get_sp(), playlist_id)
     except spotipy.SpotifyException as e:
         if e.http_status in (400, 404):
             raise ToolError(f"Playlist with id '{playlist_id}' not found") from e
@@ -193,7 +240,7 @@ def spotify_create_playlist(name: str, description: str = "", public: bool = Fal
         playlist's id), and message (str). playlist_id is needed to add tracks 
         to this playlist afterward. Check is_success to confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(create_playlist(sp, name, description=description, public=public, 
+    return _unwrap(create_playlist(get_sp(), name, description=description, public=public, 
                            collaborative=collaborative))
 
 @mcp.tool()
@@ -208,7 +255,7 @@ def spotify_add_tracks_to_playlist(playlist_id: str, track_uris: list[str]) -> d
     Returns:
         A dict with is_success (bool) and message (str). Check is_success to confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(add_tracks_to_playlist(sp, playlist_id, track_uris))
+    return _unwrap(add_tracks_to_playlist(get_sp(), playlist_id, track_uris))
 
 
 @mcp.tool()
@@ -226,7 +273,7 @@ def spotify_remove_tracks_from_playlist(playlist_id: str, track_uris: list[str])
     Returns:
         A dict with is_success (bool) and message (str). Check is_success to confirm the action worked. The tool raises an error on failure and returns the confirmation message on success.
     """
-    return _unwrap(remove_tracks_from_playlist(sp, playlist_id, track_uris))
+    return _unwrap(remove_tracks_from_playlist(get_sp(), playlist_id, track_uris))
 
 @mcp.resource("spotify://playlists", mime_type="application/json")
 def spotify_playlists() -> list:
@@ -234,7 +281,7 @@ def spotify_playlists() -> list:
     Returns:
         A list of playlists, each with id, name, and track_count.
     """
-    return get_user_playlists(sp)
+    return get_user_playlists(get_sp())
 
 @mcp.resource("spotify://playlists/{playlist_id}", mime_type="application/json")
 def spotify_playlist_tracks(playlist_id: str) -> list:
@@ -243,7 +290,7 @@ def spotify_playlist_tracks(playlist_id: str) -> list:
         A list of tracks, each with name, uri, and artist.
     """
     try:
-        return get_playlist_tracks(sp, playlist_id)
+        return get_playlist_tracks(get_sp(), playlist_id)
     except spotipy.SpotifyException as e:
         if e.http_status in (400, 404):
             raise ResourceNotFoundError(f"Playlist with id '{playlist_id}' not found") from e
